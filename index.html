@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Masáže by Soňa – rezervace</title>
+<meta name="description" content="Online rezervace masáží a EMS – Masáže by Soňa, Petřvald.">
+<meta name="theme-color" content="#0d0c0b">
+<meta property="og:title" content="Masáže by Soňa – rezervace">
+<meta property="og:description" content="Vyberte si masáž a volný termín.">
+<meta property="og:image" content="img/logo.jpg">
+<link rel="icon" href="img/logo.jpg">
+<link rel="apple-touch-icon" href="img/logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Jost:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="styl.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script src="spolecne.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand"><img src="img/logo.jpg" alt="Masáže by Soňa"></header>
+  <main id="app"></main>
+</div>
+<div id="overlay-host"></div>
+
+<script>
+(function () {
+  var CATS = [
+    { title: "Masáže", note: "60 nebo 90 minut", items: ["Sportovní masáž", "Relaxační masáž", "Antistresová masáž", "Čokoládová masáž"] },
+    { title: "Dvouhodinová masáž", note: "120 minut", items: ["Dvouhodinová masáž"] },
+    { title: "EMS", note: "30–90 minut", photo: true, items: ["EMS", "EMS + masáž"] }
+  ];
+  // ceník pro zobrazení; platná cena vždy přijde ze serveru
+  var CENIK = {
+    "Sportovní masáž": { 60: 1000, 90: 1500 }, "Relaxační masáž": { 60: 1000, 90: 1500 },
+    "Antistresová masáž": { 60: 1000, 90: 1500 }, "Čokoládová masáž": { 60: 1000, 90: 1500 },
+    "Dvouhodinová masáž": { 120: 2200 }, "EMS": { 30: 750 }, "EMS + masáž": { 60: 1500, 90: 2250 }
+  };
+
+  var app = document.getElementById("app");
+  var step = 1, pick = {}, terminy = null, chybaNacteni = "", rez = nacist("rezervace"), timerId = null, odesilam = false, chybaFormu = "";
+  var formData = nacist("udaje") || {};
+
+  function nactiTerminy() {
+    return api("terminy").then(function (j) { terminy = j.terminy; chybaNacteni = ""; })
+      .catch(function (e) { chybaNacteni = e.message; })
+      .then(function () { if (step === 2 || step === 3) render(); });
+  }
+
+  function stepsBar() {
+    var names = ["Služba", "Datum", "Čas", "Údaje"];
+    return '<div class="steps" aria-label="Postup rezervace">' + names.map(function (nm, i) {
+      var c = i + 1 === step ? "on" : (i + 1 < step ? "done" : "");
+      var label = (i + 1) + ". " + nm;
+      if (i + 1 < step) return '<button data-back="' + (i + 1) + '"><span class="' + c + '">' + label + "</span></button>";
+      return '<span class="' + c + '">' + label + "</span>";
+    }).join("") + "</div>";
+  }
+  function backBtn(to) { return '<button class="back" data-back="' + to + '"><span class="arr" aria-hidden="true">←</span>Zpět</button>'; }
+  function pickedBox() {
+    var bits = esc(pick.svc) + " · " + pick.min + " min";
+    if (pick.date) bits += "<br><span class='muted small'>" + longDate(pick.date) + (pick.time ? ", " + hezkyCas(pick.time) : "") + "</span>";
+    return '<div class="picked"><span>' + bits + "</span><b>" + czk(pick.price) + "</b></div>";
+  }
+  function phoneNote() {
+    return '<p class="phone-note">Online lze rezervovat nejméně 24 hodin předem. Termín na dnešek nebo zítřek domluvíte telefonicky na čísle <b>' + TELEFON + "</b>.</p>";
+  }
+
+  function render() {
+    if (timerId && step !== 5) { clearInterval(timerId); timerId = null; }
+    var h = "";
+    if (step === 1) h = krokSluzba();
+    else if (step === 2) h = krokDatum();
+    else if (step === 3) h = krokCas();
+    else if (step === 4) h = krokUdaje();
+    else if (step === 5) h = krokPlatba();
+    else if (step === 6) h = krokDekujeme();
+    else if (step === 7) h = krokVyprselo();
+    else if (step === 8) h = krokPotvrzeno();
+    app.innerHTML = '<div class="screen wrap">' + h + "</div>";
+    bind();
+    if (step === 5) { kreslitQR(); spustitOdpocet(); }
+  }
+
+  function krokSluzba() {
+    var h = stepsBar() + "<h2>Vyberte si masáž</h2>";
+    CATS.forEach(function (c) {
+      h += '<section class="cat"><div class="cat-head"><h3>' + c.title + '</h3><span class="label">' + c.note + "</span></div>";
+      if (c.photo) h += '<img class="ems-photo" src="img/ems.jpg" alt="EMS ošetření v salonu" loading="lazy">';
+      c.items.forEach(function (nm) {
+        h += '<div class="svc"><div class="svc-name">' + nm + '</div><div class="opts">';
+        Object.keys(CENIK[nm]).forEach(function (m) {
+          h += '<button class="opt" data-svc="' + esc(nm) + '" data-min="' + m + '" data-price="' + CENIK[nm][m] + '"><span>' + m + " min</span><b>" + czk(CENIK[nm][m]) + "</b></button>";
+        });
+        h += "</div></div>";
+      });
+      h += "</section>";
+    });
+    return h;
+  }
+
+  function krokDatum() {
+    var h = backBtn(1) + stepsBar() + pickedBox() + "<h2>Vyberte den</h2>";
+    if (chybaNacteni) return h + '<p class="err">' + esc(chybaNacteni) + '</p><button class="btn ghost" id="znovu">Zkusit znovu</button>';
+    if (!terminy) return h + '<p class="loading">Načítám volné termíny…</p>';
+    if (!terminy.length) return h + '<div class="notice"><p>Momentálně nejsou vypsané žádné termíny. Zavolejte prosím na <b>' + TELEFON + "</b>.</p></div>";
+    var dny = {};
+    terminy.forEach(function (t) { (dny[t.datum] = dny[t.datum] || []).push(t); });
+    var klice = Object.keys(dny).sort();
+    var vikend = klice.some(function (k) { var d = fromKey(k).getDay(); return d === 0 || d === 6; });
+    var sloupcu = vikend ? 7 : 5;
+    var dnes = new Date(); dnes.setHours(0, 0, 0, 0);
+    var mon = new Date(dnes); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+    var posledni = fromKey(klice[klice.length - 1]);
+    var tydnu = Math.max(2, Math.floor((posledni - mon) / (7 * 864e5)) + 1);
+    h += '<p class="small muted">Přeškrtnuté dny jsou už plně obsazené.</p>';
+    h += '<div class="cal" style="grid-template-columns:repeat(' + sloupcu + ',minmax(0,1fr))">';
+    for (var w = 0; w < tydnu; w++) {
+      h += '<div class="cal-week label">' + (w === 0 ? "Tento týden" : w === 1 ? "Příští týden" : "Za " + w + " týdny") + "</div>";
+      for (var i = 0; i < sloupcu; i++) {
+        var dd = new Date(mon); dd.setDate(mon.getDate() + w * 7 + i);
+        var k = key(dd), list = dny[k] || [];
+        var volno = list.some(function (t) { return t.stav === "volno"; });
+        var obsaz = list.some(function (t) { return t.stav === "obsazeno"; });
+        var cls = volno ? "free" : (obsaz ? "full" : "none");
+        h += '<button class="day ' + cls + '" data-date="' + k + '" aria-pressed="' + (pick.date === k) + '"' + (cls === "free" ? "" : " disabled") +
+          ' aria-label="' + longDate(k) + (cls === "free" ? ", volné termíny" : cls === "full" ? ", obsazeno" : ", bez termínů") + '">' +
+          '<span class="dw">' + DW[dd.getDay()] + '</span><span class="dn">' + dd.getDate() + '</span><span class="dm">' + MON[dd.getMonth()].slice(0, 3) + "</span></button>";
+      }
+    }
+    return h + "</div>" + phoneNote();
+  }
+
+  function krokCas() {
+    var h = backBtn(2) + stepsBar() + pickedBox() + "<h2>Vyberte čas</h2>";
+    var list = (terminy || []).filter(function (t) { return t.datum === pick.date; });
+    h += '<div class="times">';
+    list.forEach(function (t) {
+      if (t.stav === "volno") h += '<button class="time free" data-time="' + t.cas + '"><span class="t">' + hezkyCas(t.cas) + '</span><span class="s">volno</span></button>';
+      else h += '<button class="time busy" disabled><span class="t">' + hezkyCas(t.cas) + '</span><span class="s">' + (t.stav === "obsazeno" ? "obsazeno" : "jen telefonicky") + "</span></button>";
+    });
+    return h + "</div>";
+  }
+
+  function krokUdaje() {
+    return backBtn(3) + stepsBar() + "<h2>Vaše údaje</h2>" +
+      '<form id="f" novalidate>' +
+      '<div class="field"><label for="f-name">Jméno a příjmení</label><input id="f-name" autocomplete="name" required value="' + esc(formData.jmeno || "") + '"></div>' +
+      '<div class="field"><label for="f-phone">Telefon</label><input id="f-phone" type="tel" autocomplete="tel" inputmode="tel" required value="' + esc(formData.telefon || "") + '"></div>' +
+      '<div class="field"><label for="f-mail">E-mail <span class="small">(sem přijde potvrzení)</span></label><input id="f-mail" type="email" autocomplete="email" inputmode="email" required value="' + esc(formData.email || "") + '"></div>' +
+      '<div class="check"><input id="f-gdpr" type="checkbox"><label for="f-gdpr">Souhlasím se <button type="button" class="linkbtn" id="gdpr-open">zpracováním osobních údajů</button> za účelem rezervace a beru na vědomí, že při zrušení rezervace se platba nevrací.</label></div>' +
+      '<p class="err" id="f-err"' + (chybaFormu ? "" : " hidden") + ">" + esc(chybaFormu) + "</p>" +
+      '<div class="summary"><div class="row"><span>Masáž</span><span>' + esc(pick.svc) + '</span></div><div class="row"><span>Délka</span><span>' + pick.min + " min</span></div>" +
+      '<div class="row"><span>Termín</span><span>' + longDate(pick.date) + ", " + hezkyCas(pick.time) + "–" + addMin(pick.time, pick.min) + "</span></div>" +
+      '<div class="row total"><span>K úhradě</span><span>' + czk(pick.price) + "</span></div></div>" +
+      '<button class="btn" type="submit" id="f-submit"' + (odesilam ? " disabled" : "") + ">" + (odesilam ? "Odesílám…" : "Rezervovat a zaplatit") + "</button>" +
+      '<p class="small muted">Po odeslání se vám zobrazí QR kód pro platbu. Termín držíme 60 minut.</p></form>';
+  }
+
+  function krokPlatba() {
+    return '<div class="done-head"><div class="seal">✓</div><h2>Termín je pro vás blokován</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
+      '<div class="timer">Zaplaťte prosím do <b id="cd">60:00</b></div>' +
+      '<div class="qr-card"><span class="label">QR platba</span><div class="qr" id="qr"></div>' +
+      '<div class="pay"><div class="row"><span>Účet</span><span>' + esc(rez.ucet) + '</span></div><div class="row"><span>Částka</span><span>' + czk(rez.cena) + "</span></div>" +
+      '<div class="row"><span>Variabilní symbol</span><span>' + esc(rez.vs) + '</span></div><div class="row"><span>Příjemce</span><span>Masáže by Soňa</span></div></div>' +
+      '<p class="err" id="paid-err" hidden></p><button class="btn" id="paid-btn" style="width:100%">Zaplatil(a) jsem</button></div>' +
+      '<div class="notice"><p>Jakmile Soňa platbu ověří, přijde vám na <b>' + esc(rez.email) + "</b> potvrzení rezervace.</p>" +
+      "<p>Pokud platba do <b>60 minut</b> nedorazí, termín se uvolní.</p><p>Při zrušení rezervace se platba <b>nevrací</b>.</p></div>";
+  }
+
+  function souhrn(nadpisCastky) {
+    return '<div class="summary"><div class="row"><span>Termín</span><span>' + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "–" + addMin(rez.cas, rez.minut) + "</span></div>" +
+      '<div class="row"><span>Místo</span><span>Topolová 2323, Petřvald</span></div><div class="row"><span>Telefon</span><span>' + TELEFON + "</span></div>" +
+      '<div class="row total"><span>' + nadpisCastky + "</span><span>" + czk(rez.cena) + "</span></div></div>";
+  }
+  function krokDekujeme() {
+    return '<div class="done-head"><div class="seal">✓</div><h2>Děkujeme za platbu</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
+      '<div class="notice"><p>Soňa teď platbu ověří. Jakmile ji potvrdí, přijde vám na <b>' + esc(rez.email) + "</b> potvrzení rezervace.</p><p>Tuto stránku můžete zavřít.</p></div>" +
+      souhrn("Zaplaceno") + '<button class="btn ghost" id="again">Nová rezervace</button>';
+  }
+  function krokPotvrzeno() {
+    return '<div class="done-head"><div class="seal">✓</div><h2>Rezervace potvrzena</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
+      souhrn("Zaplaceno") + '<button class="btn ghost" id="again">Nová rezervace</button>';
+  }
+  function krokVyprselo() {
+    return '<div class="done-head"><h2>Lhůta pro platbu vypršela</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
+      '<div class="notice"><p>Platba do 60 minut nedorazila, a proto se termín uvolnil. Prosím <b>neplaťte</b> už tento QR kód.</p>' +
+      "<p>Pokud jste už zaplatili, zavolejte prosím na <b>" + TELEFON + "</b>.</p></div>" +
+      '<button class="btn" id="again">Vybrat nový termín</button>';
+  }
+
+  function bind() {
+    app.querySelectorAll(".opt").forEach(function (b) {
+      b.onclick = function () {
+        pick = { svc: b.dataset.svc, min: +b.dataset.min, price: +b.dataset.price };
+        step = 2; render(); scrollTop();
+      };
+    });
+    app.querySelectorAll(".day.free").forEach(function (b) {
+      b.onclick = function () { pick.date = b.dataset.date; pick.time = null; step = 3; render(); scrollTop(); };
+    });
+    app.querySelectorAll(".time.free").forEach(function (b) {
+      b.onclick = function () { pick.time = b.dataset.time; chybaFormu = ""; step = 4; render(); scrollTop(); };
+    });
+    app.querySelectorAll("[data-back]").forEach(function (b) {
+      b.onclick = function () { ulozitFormular(); step = +b.dataset.back; render(); };
+    });
+    var zn = document.getElementById("znovu");
+    if (zn) zn.onclick = function () { chybaNacteni = ""; terminy = null; render(); nactiTerminy(); };
+    var go = document.getElementById("gdpr-open");
+    if (go) go.onclick = otevritGdpr;
+    var f = document.getElementById("f");
+    if (f) f.onsubmit = odeslat;
+    var pb = document.getElementById("paid-btn");
+    if (pb) pb.onclick = zaplatil;
+    var ag = document.getElementById("again");
+    if (ag) ag.onclick = function () { rez = null; ulozit("rezervace", null); pick = {}; step = 1; terminy = null; render(); scrollTop(); nactiTerminy(); };
+  }
+
+  function ulozitFormular() {
+    var n = document.getElementById("f-name");
+    if (!n) return;
+    formData = { jmeno: n.value.trim(), telefon: document.getElementById("f-phone").value.trim(), email: document.getElementById("f-mail").value.trim() };
+    ulozit("udaje", formData);
+  }
+
+  function odeslat(e) {
+    e.preventDefault();
+    if (odesilam) return;
+    ulozitFormular();
+    var chyba = "";
+    if (!formData.jmeno) chyba = "Vyplňte prosím jméno a příjmení.";
+    else if (!/^[+0-9 ]{9,}$/.test(formData.telefon)) chyba = "Zkontrolujte prosím telefonní číslo.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) chyba = "Zkontrolujte prosím e-mail.";
+    else if (!document.getElementById("f-gdpr").checked) chyba = "Pro dokončení rezervace potvrďte souhlas se zpracováním údajů.";
+    if (chyba) { chybaFormu = chyba; var el = document.getElementById("f-err"); el.textContent = chyba; el.hidden = false; return; }
+    odesilam = true; chybaFormu = ""; render();
+    api("rezervovat", { sluzba: pick.svc, minut: pick.min, datum: pick.date, cas: pick.time,
+      jmeno: formData.jmeno, telefon: formData.telefon, email: formData.email, gdpr: true })
+      .then(function (j) {
+        rez = { vs: j.vs, token: j.token, cena: j.cena, vyprsi: j.vyprsi, ucet: j.ucet, iban: j.iban,
+          sluzba: pick.svc, minut: pick.min, datum: pick.date, cas: pick.time, email: formData.email };
+        ulozit("rezervace", rez);
+        odesilam = false; step = 5; render(); scrollTop();
+      })
+      .catch(function (err) {
+        odesilam = false; chybaFormu = err.message;
+        // termín mezitím zabral někdo jiný → načíst znovu
+        if (/zarezervoval|není v nabídce|24 hodin/.test(err.message)) nactiTerminy();
+        render();
+      });
+  }
+
+  function spayd(r) {
+    return "SPD*1.0*ACC:" + r.iban + "*AM:" + Number(r.cena).toFixed(2) + "*CC:CZK*X-VS:" + r.vs + "*MSG:REZERVACE " + r.vs + "*RN:MASAZE BY SONA";
+  }
+  function kreslitQR() {
+    var box = document.getElementById("qr");
+    if (!box) return;
+    if (typeof qrcode !== "function") { box.innerHTML = '<p style="color:#333;font-size:.8rem;padding:30px 6px;text-align:center">QR kód se nenačetl. Zaplaťte prosím podle údajů níže.</p>'; return; }
+    var q = qrcode(0, "M"); q.addData(spayd(rez)); q.make();
+    box.innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+  }
+  function spustitOdpocet() {
+    if (timerId) clearInterval(timerId);
+    function tick() {
+      var left = new Date(rez.vyprsi).getTime() - Date.now();
+      if (left <= 0) { clearInterval(timerId); timerId = null; step = 7; render(); return; }
+      var el = document.getElementById("cd");
+      if (el) el.textContent = String(Math.floor(left / 60000)).padStart(2, "0") + ":" + String(Math.floor(left / 1000) % 60).padStart(2, "0");
+    }
+    tick(); timerId = setInterval(tick, 1000);
+  }
+
+  function zaplatil() {
+    var b = document.getElementById("paid-btn"), er = document.getElementById("paid-err");
+    b.disabled = true; b.textContent = "Odesílám…"; er.hidden = true;
+    api("zaplaceno", { vs: rez.vs, token: rez.token })
+      .then(function () { rez.hlaseno = true; ulozit("rezervace", rez); step = 6; render(); scrollTop(); })
+      .catch(function (e) { b.disabled = false; b.textContent = "Zaplatil(a) jsem"; er.textContent = e.message; er.hidden = false; });
+  }
+
+  function otevritGdpr() {
+    var host = document.getElementById("overlay-host");
+    host.innerHTML = '<div class="overlay" id="ov"><div class="overlay-box" role="dialog" aria-modal="true" aria-label="Zpracování osobních údajů">' +
+      "<h3>Zpracování osobních údajů</h3>" +
+      "<p><b>Správce:</b> Masáže by Soňa, IČ 22347739, Topolová 2323, 735 41 Petřvald, tel. " + TELEFON + ".</p>" +
+      "<h4>Jaké údaje a proč</h4><p>Jméno, telefon, e-mail a vybraný termín. Používáme je jen k vyřízení vaší rezervace a ke komunikaci o ní (potvrzení, připomínka, případné změny). Právním základem je plnění smlouvy.</p>" +
+      "<h4>Jak dlouho</h4><p>Po dobu nutnou k vyřízení rezervace, nejdéle 12 měsíců od termínu masáže, pokud zákon (např. účetní předpisy) nevyžaduje déle.</p>" +
+      "<h4>Kdo k nim má přístup</h4><p>Jen Soňa. Údaje jsou uložené ve službách Google (Gmail, Tabulky), které slouží jako zpracovatel. Nikomu dalšímu je nepředáváme.</p>" +
+      "<h4>Vaše práva</h4><p>Můžete požádat o přístup k údajům, jejich opravu nebo výmaz a vznést námitku. Stížnost lze podat u Úřadu pro ochranu osobních údajů (uoou.gov.cz).</p>" +
+      '<button class="btn" id="ov-close">Rozumím</button></div></div>';
+    document.getElementById("ov-close").onclick = function () { host.innerHTML = ""; };
+    document.getElementById("ov").onclick = function (e) { if (e.target.id === "ov") host.innerHTML = ""; };
+  }
+
+  // rozpracovaná rezervace z minula (zákazník zavřel stránku s QR kódem)
+  function obnovit() {
+    if (!rez || !rez.vs) { render(); return; }
+    app.innerHTML = '<p class="loading">Načítám vaši rezervaci…</p>';
+    api("stav", { vs: rez.vs, token: rez.token })
+      .then(function (j) {
+        if (j.stav === "čeká na platbu") step = 5;
+        else if (j.stav === "hlásí zaplaceno") step = 6;
+        else if (j.stav === "zaplaceno") step = 8;
+        else { rez = null; ulozit("rezervace", null); step = 1; }
+      })
+      .catch(function () { rez = null; ulozit("rezervace", null); step = 1; })
+      .then(render);
+  }
+
+  obnovit();
+  nactiTerminy();
+})();
+</script>
+</body>
+</html>

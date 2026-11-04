@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Administrace – Masáže by Soňa</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0d0c0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Rezervace">
+<link rel="icon" href="img/logo.jpg">
+<link rel="apple-touch-icon" href="img/logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Jost:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="styl.css">
+<script src="spolecne.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand small"><img src="img/logo.jpg" alt="Masáže by Soňa"></header>
+  <main id="app"></main>
+</div>
+<div id="sheet-host"></div>
+
+<script>
+(function () {
+  var app = document.getElementById("app");
+  var klic = nacist("adminKlic");
+  var data = null, chyba = "", tab = "res", pracuji = false;
+  var noveDny = [];             // dny přidané v kalendáři, které zatím nemají žádný čas
+  var potvrditMazani = null;    // { datum, cas|null } když mazání zruší rezervaci
+  var pickerOpen = false, pickerMonth = null;
+  var HOURS = [], MINS = ["00", "30"];
+  for (var h = 7; h <= 20; h++) HOURS.push(String(h).padStart(2, "0"));
+
+  function zavolat(akce, data2) { return api(akce, Object.assign({ klic: klic }, data2 || {})); }
+
+  function nacti() {
+    return zavolat("admin-prehled")
+      .then(function (j) { data = j; chyba = ""; })
+      .catch(function (e) {
+        chyba = e.message;
+        if (/odepřen/.test(e.message)) { klic = null; ulozit("adminKlic", null); }
+      })
+      .then(render);
+  }
+
+  /** Provede změnu a znovu načte přehled. */
+  function akce(nazev, data2) {
+    if (pracuji) return;
+    pracuji = true; render();
+    zavolat(nazev, data2)
+      .catch(function (e) { chyba = e.message; })
+      .then(function () { pracuji = false; return nacti(); });
+  }
+
+  // ---------- přihlášení ----------
+  function renderLogin() {
+    app.innerHTML = '<div class="screen wrap"><h2>Administrace</h2>' +
+      '<form id="lf"><div class="field"><label for="lf-klic">Klíč administrace</label><input id="lf-klic" autocomplete="off" autocapitalize="off" spellcheck="false"></div>' +
+      (chyba ? '<p class="err">' + esc(chyba) + "</p>" : "") +
+      '<button class="btn" type="submit">Přihlásit</button>' +
+      '<p class="small muted">Klíč najdete v Apps Scriptu po spuštění funkce „nastavit“. Telefon si ho zapamatuje.</p></form></div>';
+    document.getElementById("lf").onsubmit = function (e) {
+      e.preventDefault();
+      klic = document.getElementById("lf-klic").value.trim();
+      if (!klic) return;
+      ulozit("adminKlic", klic);
+      app.innerHTML = '<p class="loading">Načítám…</p>';
+      nacti();
+    };
+  }
+
+  // ---------- přehled ----------
+  function render() {
+    if (!klic) { renderLogin(); return; }
+    if (!data) { app.innerHTML = chyba ? '<div class="wrap"><p class="err">' + esc(chyba) + '</p><button class="btn ghost" id="znovu">Zkusit znovu</button></div>' : '<p class="loading">Načítám…</p>';
+      var zn = document.getElementById("znovu"); if (zn) zn.onclick = function () { chyba = ""; render(); nacti(); };
+      return; }
+    var h = '<div class="admin-head"><h2>Dobrý den, Soňo</h2><button id="obnovit">' + (pracuji ? "Ukládám…" : "Obnovit ↻") + "</button></div>";
+    h += '<div class="tabs" role="group"><button id="t-res" aria-pressed="' + (tab === "res") + '">Rezervace</button><button id="t-slots" aria-pressed="' + (tab === "slots") + '">Moje termíny</button></div>';
+    if (chyba) h += '<p class="err">' + esc(chyba) + "</p>";
+    h += tab === "res" ? zalozkaRezervace() : zalozkaTerminy();
+    h += '<button class="btn ghost" id="odhlasit" style="margin-top:20px">Odhlásit z tohoto telefonu</button>';
+    app.innerHTML = '<div class="wrap">' + h + "</div>";
+    bind();
+  }
+
+  function minutDoUvolneni(r) { return Math.max(0, Math.ceil((new Date(r.vyprsi).getTime() - Date.now()) / 60000)); }
+
+  function resCard(r) {
+    var ceka = r.stav !== "zaplaceno";
+    var pill = r.stav === "hlásí zaplaceno" ? '<span class="pill rep">hlásí zaplaceno</span>' : '<span class="pill">' + esc(r.stav) + "</span>";
+    return '<div class="res' + (ceka ? " pending" : "") + '"><div class="res-top"><div><div class="res-when">' + shortDate(r.datum) + " · " + hezkyCas(r.cas) + "</div>" +
+      '<div class="small muted">' + esc(r.sluzba) + " · " + r.minut + " min</div></div>" + pill + "</div>" +
+      '<div class="res-meta"><b>' + esc(r.jmeno) + "</b><span>" + esc(r.telefon) + " · " + esc(r.email) + "</span><span>" + czk(r.cena) + " · VS " + esc(r.vs) + "</span>" +
+      (r.stav === "čeká na platbu" && r.vyprsi ? "<span>Termín se uvolní za " + minutDoUvolneni(r) + " min</span>" : "") + "</div>" +
+      (ceka ? '<button class="btn ok" data-pay="' + esc(r.vs) + '"' + (pracuji ? " disabled" : "") + ">Platba přišla ✓</button>" : "") + "</div>";
+  }
+
+  function zalozkaRezervace() {
+    var ceka = data.rezervace.filter(function (r) { return r.stav !== "zaplaceno"; });
+    var ok = data.rezervace.filter(function (r) { return r.stav === "zaplaceno"; });
+    return '<h3 class="group-title">Čeká na platbu <span class="muted small">(' + ceka.length + ")</span></h3>" +
+      (ceka.length ? ceka.map(resCard).join("") : '<p class="muted small">Nic nečeká. Nové rezervace se objeví tady a zároveň přijdou e-mailem.</p>') +
+      '<h3 class="group-title">Potvrzené <span class="muted small">(' + ok.length + ")</span></h3>" +
+      (ok.length ? ok.map(resCard).join("") : '<p class="muted small">Zatím žádné.</p>');
+  }
+
+  function zalozkaTerminy() {
+    var dny = {};
+    data.terminy.forEach(function (t) { (dny[t.datum] = dny[t.datum] || []).push(t); });
+    noveDny = noveDny.filter(function (k) { return !dny[k]; });
+    noveDny.forEach(function (k) { dny[k] = []; });
+    var h = '<p class="small muted">Přidejte časy, kdy můžete masírovat. Zákazníci uvidí jen tyto časy.</p>';
+    var klice = Object.keys(dny).sort();
+    if (!klice.length) h += '<p class="muted small">Zatím nemáte vypsaný žádný termín. Začněte tlačítkem „Přidat další den“.</p>';
+    klice.forEach(function (k) {
+      var list = dny[k];
+      h += '<div class="dayblock"><div class="dayblock-head"><h3>' + longDate(k) + '</h3><button class="del-day" data-del-day="' + k + '">Smazat den ×</button></div><div class="chips">';
+      list.forEach(function (t) {
+        var label = hezkyCas(t.cas) + (t.rezervace ? " · " + esc(t.rezervace.jmeno.split(" ")[0]) : "");
+        h += '<span class="chip' + (t.rezervace ? " busy" : "") + '">' + label + '<button data-del="' + k + "|" + t.cas + '" aria-label="Smazat čas ' + t.cas + '">×</button></span>';
+      });
+      if (!list.length) h += '<span class="small muted">Zatím žádný čas. Přidejte první.</span>';
+      h += "</div>";
+      if (potvrditMazani && potvrditMazani.datum === k) {
+        var zasah = list.filter(function (t) { return t.rezervace && (!potvrditMazani.cas || t.cas === potvrditMazani.cas); });
+        h += '<div class="confirm"><p>' + (potvrditMazani.cas ? "Na tento čas je rezervace: " : "V tomto dni jsou rezervace: ") + "<b>" +
+          zasah.map(function (t) { return hezkyCas(t.cas) + " " + esc(t.rezervace.jmeno); }).join(", ") +
+          "</b>. Smazáním se zruší a zákazníkovi přijde e-mail. Zaplacenou částku je pak potřeba vrátit ručně.</p>" +
+          '<div class="confirm-btns"><button class="yes" id="del-yes">Smazat</button><button id="del-no">Ponechat</button></div></div>';
+      }
+      h += '<button class="add-time" data-open-time="' + k + '">+ Přidat čas</button></div>';
+    });
+    h += pickerOpen ? miniCal(dny) : '<button class="btn ghost" id="add-day-btn">+ Přidat další den</button>';
+    return h;
+  }
+
+  function miniCal(dny) {
+    var m = pickerMonth, dnes = new Date(); dnes.setHours(0, 0, 0, 0);
+    var h = '<div class="dayblock mcal"><div class="dayblock-head"><button class="mnav" data-mnav="-1" aria-label="Předchozí měsíc"' +
+      (m <= new Date(dnes.getFullYear(), dnes.getMonth(), 1) ? " disabled" : "") + ">‹</button><h3>" + MESICE[m.getMonth()] + " " + m.getFullYear() +
+      '</h3><button class="mnav" data-mnav="1" aria-label="Další měsíc">›</button></div><div class="mgrid">' +
+      ["po", "út", "st", "čt", "pá", "so", "ne"].map(function (x) { return '<span class="mhd">' + x + "</span>"; }).join("");
+    for (var i = 0; i < (m.getDay() + 6) % 7; i++) h += "<span></span>";
+    var pocet = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
+    for (var d = 1; d <= pocet; d++) {
+      var x = new Date(m.getFullYear(), m.getMonth(), d), k = key(x);
+      if (x < dnes) h += '<span class="mday past">' + d + "</span>";
+      else if (dny[k]) h += '<span class="mday has" title="Den už máte přidaný">' + d + "</span>";
+      else h += '<button class="mday" data-pick="' + k + '" aria-label="Přidat ' + longDate(k) + '">' + d + "</button>";
+    }
+    return h + '</div><p class="small muted">Zlatě orámované dny už máte přidané. Po výběru dne rovnou nastavíte první čas.</p><button class="btn ghost" id="pick-close">Zavřít</button></div>';
+  }
+
+  function bind() {
+    document.getElementById("t-res").onclick = function () { tab = "res"; render(); };
+    document.getElementById("t-slots").onclick = function () { tab = "slots"; render(); };
+    document.getElementById("obnovit").onclick = function () { chyba = ""; nacti(); };
+    document.getElementById("odhlasit").onclick = function () { klic = null; ulozit("adminKlic", null); data = null; render(); };
+    app.querySelectorAll("[data-pay]").forEach(function (b) { b.onclick = function () { akce("admin-potvrdit", { vs: b.dataset.pay }); }; });
+    app.querySelectorAll("[data-del]").forEach(function (b) {
+      b.onclick = function () {
+        var p = b.dataset.del.split("|");
+        var t = data.terminy.filter(function (x) { return x.datum === p[0] && x.cas === p[1]; })[0];
+        if (t && t.rezervace) { potvrditMazani = { datum: p[0], cas: p[1] }; render(); }
+        else akce("admin-smazat", { datum: p[0], cas: p[1] });
+      };
+    });
+    app.querySelectorAll("[data-del-day]").forEach(function (b) {
+      b.onclick = function () {
+        var k = b.dataset.delDay;
+        if (noveDny.indexOf(k) >= 0) { noveDny = noveDny.filter(function (x) { return x !== k; }); render(); return; }
+        var obsazeny = data.terminy.some(function (t) { return t.datum === k && t.rezervace; });
+        if (obsazeny) { potvrditMazani = { datum: k, cas: null }; render(); }
+        else akce("admin-smazat-den", { datum: k });
+      };
+    });
+    var dy = document.getElementById("del-yes"), dn = document.getElementById("del-no");
+    if (dy) dy.onclick = function () {
+      var p = potvrditMazani; potvrditMazani = null;
+      if (p.cas) akce("admin-smazat", { datum: p.datum, cas: p.cas }); else akce("admin-smazat-den", { datum: p.datum });
+    };
+    if (dn) dn.onclick = function () { potvrditMazani = null; render(); };
+    app.querySelectorAll("[data-open-time]").forEach(function (b) { b.onclick = function () { otevritBudik(b.dataset.openTime); }; });
+    var ad = document.getElementById("add-day-btn");
+    if (ad) ad.onclick = function () { var d = new Date(); pickerOpen = true; pickerMonth = new Date(d.getFullYear(), d.getMonth(), 1); render(); };
+    app.querySelectorAll("[data-mnav]").forEach(function (b) {
+      b.onclick = function () { pickerMonth = new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() + +b.dataset.mnav, 1); render(); };
+    });
+    app.querySelectorAll("[data-pick]").forEach(function (b) {
+      b.onclick = function () { var k = b.dataset.pick; noveDny.push(k); pickerOpen = false; render(); otevritBudik(k); };
+    });
+    var pc = document.getElementById("pick-close");
+    if (pc) pc.onclick = function () { pickerOpen = false; render(); };
+  }
+
+  // ---------- budík ----------
+  function otevritBudik(k) {
+    var ITEM = 44, host = document.getElementById("sheet-host");
+    host.innerHTML = '<div class="sheet-bg" id="sheet-bg"><div class="sheet" role="dialog" aria-modal="true" aria-label="Nový čas">' +
+      '<div class="sheet-head"><h3>Nový čas</h3><span class="small muted">' + longDate(k) + "</span></div>" +
+      '<div class="wheels"><div class="wheel" id="wh-h" tabindex="0" aria-label="Hodiny">' + HOURS.map(function (x) { return "<div>" + x + "</div>"; }).join("") + "</div>" +
+      '<span class="colon">:</span><div class="wheel" id="wh-m" tabindex="0" aria-label="Minuty">' + MINS.map(function (x) { return "<div>" + x + "</div>"; }).join("") + "</div></div>" +
+      '<p class="err" id="sheet-err" hidden></p>' +
+      '<div class="sheet-btns"><button class="btn ghost" id="sheet-cancel">Zrušit</button><button class="btn" id="sheet-ok">Přidat</button></div></div></div>';
+    var wh = document.getElementById("wh-h"), wm = document.getElementById("wh-m");
+    wh.scrollTop = HOURS.indexOf("09") * ITEM; wm.scrollTop = 0;
+    [wh, wm].forEach(function (w) {
+      Array.prototype.forEach.call(w.children, function (c, i) { c.onclick = function () { w.scrollTo({ top: i * ITEM, behavior: "smooth" }); }; });
+    });
+    function close() { host.innerHTML = ""; }
+    document.getElementById("sheet-cancel").onclick = close;
+    document.getElementById("sheet-bg").onclick = function (e) { if (e.target.id === "sheet-bg") close(); };
+    document.getElementById("sheet-ok").onclick = function () {
+      var t = HOURS[Math.min(HOURS.length - 1, Math.round(wh.scrollTop / ITEM))] + ":" + MINS[Math.min(MINS.length - 1, Math.round(wm.scrollTop / ITEM))];
+      var uz = data.terminy.some(function (x) { return x.datum === k && x.cas === t; });
+      var er = document.getElementById("sheet-err");
+      if (uz) { er.textContent = "Tento čas už v tomto dni máte."; er.hidden = false; return; }
+      var ok = document.getElementById("sheet-ok");
+      ok.disabled = true; ok.textContent = "Ukládám…";
+      zavolat("admin-pridat", { datum: k, cas: t })
+        .then(function () { close(); return nacti(); })
+        .catch(function (e) { ok.disabled = false; ok.textContent = "Přidat"; er.textContent = e.message; er.hidden = false; });
+    };
+  }
+
+  // přehled se sám obnovuje každou minutu (nové rezervace, odpočty)
+  setInterval(function () { if (klic && !pracuji && !document.getElementById("sheet-bg") && !potvrditMazani) nacti(); }, 60000);
+  if (klic) { app.innerHTML = '<p class="loading">Načítám…</p>'; nacti(); } else render();
+})();
+</script>
+</body>
+</html>
