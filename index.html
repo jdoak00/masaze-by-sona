@@ -112,7 +112,7 @@
     POUKAZ.hodnoty.forEach(function (v) {
       h += '<button class="opt" data-poukaz="' + v + '" style="justify-content:center"><b>' + czk(v) + "</b></button>";
     });
-    h += '</div><p class="small muted">Po zaplacení vám poukázku pošleme e-mailem v PDF.</p></div></section>';
+    h += '</div><p class="small muted">Po zaplacení vám poukázku pošleme e-mailem v PDF. Termín na poukázku se domlouvá telefonicky na čísle ' + TELEFON + ".</p></div></section>";
     return h;
   }
 
@@ -213,7 +213,7 @@
   }
   function krokPotvrzeno() {
     return '<div class="done-head"><div class="seal">✓</div><h2>' + (rez.poukaz ? "Poukázka odeslána" : "Rezervace potvrzena") + '</h2><p class="muted">' + coSlovy(rez) + "</p></div>" +
-      (rez.poukaz ? '<div class="notice"><p>Poukázku jsme vám poslali e-mailem. Poukaz je nutné vytisknout a vzít s sebou.</p></div>' : "") +
+      (rez.poukaz ? '<div class="notice"><p>Poukázku jsme vám poslali e-mailem. Poukaz je nutné vytisknout a vzít s sebou.</p><p>Termín si domluvíte telefonicky na čísle <b>' + TELEFON + "</b>.</p></div>" : "") +
       souhrn("Zaplaceno") + '<button class="btn ghost" id="again">' + (rez.poukaz ? "Zpět na nabídku" : "Nová rezervace") + "</button>";
   }
   function krokVyprselo() {
