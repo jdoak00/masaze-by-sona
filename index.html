@@ -39,25 +39,33 @@
     "Dvouhodinová masáž": { 120: 2200 }, "EMS": { 30: 750 }, "EMS + masáž": { 60: 1500, 90: 2250 }
   };
 
+  var POUKAZ = { nazev: "Poukázka (permanentka)", hodnoty: [1500, 3000, 5000] };
+
   var app = document.getElementById("app");
   var step = 1, pick = {}, terminy = null, chybaNacteni = "", rez = nacist("rezervace"), timerId = null, odesilam = false, chybaFormu = "";
   var formData = nacist("udaje") || {};
+  var lhutaMin = 120;   // přepíše se hodnotou ze serveru
+
+  /** Lhůta po předložce „do“: „2 hodin“, „1 hodiny“, „90 minut“. */
+  function lhutaDo(m) { m = m || lhutaMin; if (m % 60) return m + " minut"; return m === 60 ? "1 hodiny" : (m / 60) + " hodin"; }
 
   function nactiTerminy() {
-    return api("terminy").then(function (j) { terminy = j.terminy; chybaNacteni = ""; })
+    return api("terminy").then(function (j) { terminy = j.terminy; chybaNacteni = ""; if (j.lhutaMin) lhutaMin = j.lhutaMin; })
       .catch(function (e) { chybaNacteni = e.message; })
       .then(function () { if (step === 2 || step === 3) render(); });
   }
 
   function stepsBar() {
-    var names = ["Služba", "Datum", "Čas", "Údaje"];
-    return '<div class="steps" aria-label="Postup rezervace">' + names.map(function (nm, i) {
-      var c = i + 1 === step ? "on" : (i + 1 < step ? "done" : "");
-      var label = (i + 1) + ". " + nm;
-      if (i + 1 < step) return '<button data-back="' + (i + 1) + '"><span class="' + c + '">' + label + "</span></button>";
+    // poukázka má jen dva kroky: výběr hodnoty (krok 1) a údaje (krok 4)
+    var kroky = pick.poukaz && step === 4 ? [[1, "Poukázka"], [4, "Údaje"]] : [[1, "Služba"], [2, "Datum"], [3, "Čas"], [4, "Údaje"]];
+    return '<div class="steps" aria-label="Postup" style="grid-template-columns:repeat(' + kroky.length + ',1fr)">' + kroky.map(function (k, i) {
+      var c = k[0] === step ? "on" : (k[0] < step ? "done" : "");
+      var label = (i + 1) + ". " + k[1];
+      if (k[0] < step) return '<button data-back="' + k[0] + '"><span class="' + c + '">' + label + "</span></button>";
       return '<span class="' + c + '">' + label + "</span>";
     }).join("") + "</div>";
   }
+  function coSlovy(r) { return r.poukaz ? "v hodnotě " + czk(r.cena) : esc(r.sluzba) + " · " + longDate(r.datum) + ", " + hezkyCas(r.cas); }
   function backBtn(to) { return '<button class="back" data-back="' + to + '"><span class="arr" aria-hidden="true">←</span>Zpět</button>'; }
   function pickedBox() {
     var bits = esc(pick.svc) + " · " + pick.min + " min";
@@ -98,6 +106,13 @@
       });
       h += "</section>";
     });
+    h += '<section class="cat"><div class="cat-head"><h3>' + POUKAZ.nazev + '</h3><span class="label">dárek</span></div>' +
+      '<img class="ems-photo" src="img/poukaz.jpg" alt="Dárkový voucher Masáže by Soňa" loading="lazy" style="aspect-ratio:auto;object-fit:contain">' +
+      '<div class="svc"><div class="svc-name">Poukázka v hodnotě</div><div class="opts">';
+    POUKAZ.hodnoty.forEach(function (v) {
+      h += '<button class="opt" data-poukaz="' + v + '" style="justify-content:center"><b>' + czk(v) + "</b></button>";
+    });
+    h += '</div><p class="small muted">Po zaplacení vám poukázku pošleme e-mailem v PDF.</p></div></section>';
     return h;
   }
 
@@ -145,57 +160,76 @@
   }
 
   function krokUdaje() {
-    return backBtn(3) + stepsBar() + "<h2>Vaše údaje</h2>" +
+    var souhrnObj = pick.poukaz
+      ? '<div class="row"><span>Poukázka</span><span>' + POUKAZ.nazev + "</span></div>"
+      : '<div class="row"><span>Masáž</span><span>' + esc(pick.svc) + '</span></div><div class="row"><span>Délka</span><span>' + pick.min + " min</span></div>" +
+        '<div class="row"><span>Termín</span><span>' + longDate(pick.date) + ", " + hezkyCas(pick.time) + "–" + addMin(pick.time, pick.min) + "</span></div>";
+    var pozn = pick.poukaz
+      ? "Po odeslání se vám zobrazí QR kód pro platbu. Poukázku vám pošleme e-mailem, jakmile Soňa platbu ověří."
+      : "Po odeslání se vám zobrazí QR kód pro platbu. Termín pro vás podržíme, zaplaťte prosím do " + lhutaDo() + ".";
+    return backBtn(pick.poukaz ? 1 : 3) + stepsBar() + "<h2>Vaše údaje</h2>" +
       '<form id="f" novalidate>' +
       '<div class="field"><label for="f-name">Jméno a příjmení</label><input id="f-name" autocomplete="name" required value="' + esc(formData.jmeno || "") + '"></div>' +
       '<div class="field"><label for="f-phone">Telefon</label><input id="f-phone" type="tel" autocomplete="tel" inputmode="tel" required value="' + esc(formData.telefon || "") + '"></div>' +
-      '<div class="field"><label for="f-mail">E-mail <span class="small">(sem přijde potvrzení)</span></label><input id="f-mail" type="email" autocomplete="email" inputmode="email" required value="' + esc(formData.email || "") + '"></div>' +
-      '<div class="check"><input id="f-gdpr" type="checkbox"><label for="f-gdpr">Souhlasím se <button type="button" class="linkbtn" id="gdpr-open">zpracováním osobních údajů</button> za účelem rezervace a beru na vědomí, že při zrušení rezervace se platba nevrací.</label></div>' +
+      '<div class="field"><label for="f-mail">E-mail <span class="small">(sem přijde ' + (pick.poukaz ? "poukázka" : "potvrzení") + ')</span></label><input id="f-mail" type="email" autocomplete="email" inputmode="email" required value="' + esc(formData.email || "") + '"></div>' +
+      '<div class="check"><input id="f-gdpr" type="checkbox"><label for="f-gdpr">Souhlasím se <button type="button" class="linkbtn" id="gdpr-open">zpracováním osobních údajů</button>' +
+      (pick.poukaz ? " za účelem objednávky poukázky." : " za účelem rezervace a beru na vědomí, že při zrušení rezervace se platba nevrací.") + "</label></div>" +
       '<p class="err" id="f-err"' + (chybaFormu ? "" : " hidden") + ">" + esc(chybaFormu) + "</p>" +
-      '<div class="summary"><div class="row"><span>Masáž</span><span>' + esc(pick.svc) + '</span></div><div class="row"><span>Délka</span><span>' + pick.min + " min</span></div>" +
-      '<div class="row"><span>Termín</span><span>' + longDate(pick.date) + ", " + hezkyCas(pick.time) + "–" + addMin(pick.time, pick.min) + "</span></div>" +
+      '<div class="summary">' + souhrnObj +
       '<div class="row total"><span>K úhradě</span><span>' + czk(pick.price) + "</span></div></div>" +
-      '<button class="btn" type="submit" id="f-submit"' + (odesilam ? " disabled" : "") + ">" + (odesilam ? "Odesílám…" : "Rezervovat a zaplatit") + "</button>" +
-      '<p class="small muted">Po odeslání se vám zobrazí QR kód pro platbu. Termín držíme 60 minut.</p></form>';
+      '<button class="btn" type="submit" id="f-submit"' + (odesilam ? " disabled" : "") + ">" +
+      (odesilam ? "Odesílám…" : pick.poukaz ? "Objednat a zaplatit" : "Rezervovat a zaplatit") + "</button>" +
+      '<p class="small muted">' + pozn + "</p></form>";
   }
 
   function krokPlatba() {
-    return '<div class="done-head"><div class="seal">✓</div><h2>Termín je pro vás blokován</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
-      '<div class="timer">Zaplaťte prosím do <b id="cd">60:00</b></div>' +
+    return '<div class="done-head"><div class="seal">✓</div><h2>' + (rez.poukaz ? POUKAZ.nazev + " je objednaná" : "Termín je pro vás blokován") +
+      '</h2><p class="muted">' + coSlovy(rez) + "</p></div>" +
+      '<div class="timer">Zaplaťte prosím do <b id="cd">' + odpocetText() + "</b></div>" +
       '<div class="qr-card"><span class="label">QR platba</span><div class="qr" id="qr"></div>' +
       '<div class="pay"><div class="row"><span>Účet</span><span>' + esc(rez.ucet) + '</span></div><div class="row"><span>Částka</span><span>' + czk(rez.cena) + "</span></div>" +
       '<div class="row"><span>Variabilní symbol</span><span>' + esc(rez.vs) + '</span></div><div class="row"><span>Příjemce</span><span>Masáže by Soňa</span></div></div>' +
       '<p class="err" id="paid-err" hidden></p><button class="btn" id="paid-btn" style="width:100%">Zaplatil(a) jsem</button></div>' +
-      '<div class="notice"><p>Jakmile Soňa platbu ověří, přijde vám na <b>' + esc(rez.email) + "</b> potvrzení rezervace.</p>" +
-      "<p>Pokud platba do <b>60 minut</b> nedorazí, termín se uvolní.</p><p>Při zrušení rezervace se platba <b>nevrací</b>.</p></div>";
+      (rez.poukaz
+        ? '<div class="notice"><p>Jakmile Soňa platbu ověří, pošleme vám na <b>' + esc(rez.email) + "</b> poukázku v PDF.</p>" +
+          "<p>Pokud platba do <b>" + lhutaDo(rez.lhutaMin) + "</b> nedorazí, objednávka se zruší.</p></div>"
+        : '<div class="notice"><p>Jakmile Soňa platbu ověří, přijde vám na <b>' + esc(rez.email) + "</b> potvrzení rezervace.</p>" +
+          "<p>Pokud platba do <b>" + lhutaDo(rez.lhutaMin) + "</b> nedorazí, termín se uvolní.</p><p>Při zrušení rezervace se platba <b>nevrací</b>.</p></div>");
   }
 
   function souhrn(nadpisCastky) {
-    return '<div class="summary"><div class="row"><span>Termín</span><span>' + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "–" + addMin(rez.cas, rez.minut) + "</span></div>" +
-      '<div class="row"><span>Místo</span><span>Topolová 2323, Petřvald</span></div><div class="row"><span>Telefon</span><span>' + TELEFON + "</span></div>" +
+    var radky = rez.poukaz
+      ? '<div class="row"><span>Poukázka</span><span>' + POUKAZ.nazev + "</span></div>"
+      : '<div class="row"><span>Termín</span><span>' + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "–" + addMin(rez.cas, rez.minut) + "</span></div>" +
+        '<div class="row"><span>Místo</span><span>Topolová 2323, Petřvald</span></div>';
+    return '<div class="summary">' + radky + '<div class="row"><span>Telefon</span><span>' + TELEFON + "</span></div>" +
       '<div class="row total"><span>' + nadpisCastky + "</span><span>" + czk(rez.cena) + "</span></div></div>";
   }
   function krokDekujeme() {
-    return '<div class="done-head"><div class="seal">✓</div><h2>Děkujeme za platbu</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
-      '<div class="notice"><p>Soňa teď platbu ověří. Jakmile ji potvrdí, přijde vám na <b>' + esc(rez.email) + "</b> potvrzení rezervace.</p><p>Tuto stránku můžete zavřít.</p></div>" +
-      souhrn("Zaplaceno") + '<button class="btn ghost" id="again">Nová rezervace</button>';
+    return '<div class="done-head"><div class="seal">✓</div><h2>Děkujeme za platbu</h2><p class="muted">' + coSlovy(rez) + "</p></div>" +
+      '<div class="notice"><p>Soňa teď platbu ověří. Jakmile ji potvrdí, přijde vám na <b>' + esc(rez.email) + "</b> " +
+      (rez.poukaz ? "poukázka v PDF" : "potvrzení rezervace") + ".</p><p>Tuto stránku můžete zavřít.</p></div>" +
+      souhrn("Zaplaceno") + '<button class="btn ghost" id="again">' + (rez.poukaz ? "Zpět na nabídku" : "Nová rezervace") + "</button>";
   }
   function krokPotvrzeno() {
-    return '<div class="done-head"><div class="seal">✓</div><h2>Rezervace potvrzena</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
-      souhrn("Zaplaceno") + '<button class="btn ghost" id="again">Nová rezervace</button>';
+    return '<div class="done-head"><div class="seal">✓</div><h2>' + (rez.poukaz ? "Poukázka odeslána" : "Rezervace potvrzena") + '</h2><p class="muted">' + coSlovy(rez) + "</p></div>" +
+      (rez.poukaz ? '<div class="notice"><p>Poukázku jsme vám poslali e-mailem. Poukaz je nutné vytisknout a vzít s sebou.</p></div>' : "") +
+      souhrn("Zaplaceno") + '<button class="btn ghost" id="again">' + (rez.poukaz ? "Zpět na nabídku" : "Nová rezervace") + "</button>";
   }
   function krokVyprselo() {
-    return '<div class="done-head"><h2>Lhůta pro platbu vypršela</h2><p class="muted">' + esc(rez.sluzba) + " · " + longDate(rez.datum) + ", " + hezkyCas(rez.cas) + "</p></div>" +
-      '<div class="notice"><p>Platba do 60 minut nedorazila, a proto se termín uvolnil. Prosím <b>neplaťte</b> už tento QR kód.</p>' +
+    return '<div class="done-head"><h2>Lhůta pro platbu vypršela</h2><p class="muted">' + coSlovy(rez) + "</p></div>" +
+      '<div class="notice"><p>Platba do ' + lhutaDo(rez.lhutaMin) + " nedorazila, a proto " + (rez.poukaz ? "jsme objednávku zrušili" : "se termín uvolnil") +
+      ". Prosím <b>neplaťte</b> už tento QR kód.</p>" +
       "<p>Pokud jste už zaplatili, zavolejte prosím na <b>" + TELEFON + "</b>.</p></div>" +
-      '<button class="btn" id="again">Vybrat nový termín</button>';
+      '<button class="btn" id="again">Zpět na nabídku</button>';
   }
 
   function bind() {
     app.querySelectorAll(".opt").forEach(function (b) {
       b.onclick = function () {
-        pick = { svc: b.dataset.svc, min: +b.dataset.min, price: +b.dataset.price };
-        step = 2; render(); scrollTop();
+        if (b.dataset.poukaz) { pick = { poukaz: true, svc: POUKAZ.nazev, price: +b.dataset.poukaz }; chybaFormu = ""; step = 4; }
+        else { pick = { svc: b.dataset.svc, min: +b.dataset.min, price: +b.dataset.price }; step = 2; }
+        render(); scrollTop();
       };
     });
     app.querySelectorAll(".day.free").forEach(function (b) {
@@ -237,11 +271,14 @@
     else if (!document.getElementById("f-gdpr").checked) chyba = "Pro dokončení rezervace potvrďte souhlas se zpracováním údajů.";
     if (chyba) { chybaFormu = chyba; var el = document.getElementById("f-err"); el.textContent = chyba; el.hidden = false; return; }
     odesilam = true; chybaFormu = ""; render();
-    api("rezervovat", { sluzba: pick.svc, minut: pick.min, datum: pick.date, cas: pick.time,
-      jmeno: formData.jmeno, telefon: formData.telefon, email: formData.email, gdpr: true })
+    var kontakt = { jmeno: formData.jmeno, telefon: formData.telefon, email: formData.email, gdpr: true };
+    var data = pick.poukaz
+      ? Object.assign({ typ: "poukaz", hodnota: pick.price }, kontakt)
+      : Object.assign({ sluzba: pick.svc, minut: pick.min, datum: pick.date, cas: pick.time }, kontakt);
+    api("rezervovat", data)
       .then(function (j) {
-        rez = { vs: j.vs, token: j.token, cena: j.cena, vyprsi: j.vyprsi, ucet: j.ucet, iban: j.iban,
-          sluzba: pick.svc, minut: pick.min, datum: pick.date, cas: pick.time, email: formData.email };
+        rez = { vs: j.vs, token: j.token, cena: j.cena, vyprsi: j.vyprsi, ucet: j.ucet, iban: j.iban, lhutaMin: j.lhutaMin,
+          poukaz: !!pick.poukaz, sluzba: pick.svc, minut: pick.min, datum: pick.date, cas: pick.time, email: formData.email };
         ulozit("rezervace", rez);
         odesilam = false; step = 5; render(); scrollTop();
       })
@@ -263,13 +300,18 @@
     var q = qrcode(0, "M"); q.addData(spayd(rez)); q.make();
     box.innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
   }
+  /** Zbývající čas: „1:59:59“, pod hodinu „59:59“. */
+  function odpocetText() {
+    var s = Math.max(0, Math.floor((new Date(rez.vyprsi).getTime() - Date.now()) / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, sec = s % 60;
+    return (h ? h + ":" + String(m).padStart(2, "0") : String(m).padStart(2, "0")) + ":" + String(sec).padStart(2, "0");
+  }
   function spustitOdpocet() {
     if (timerId) clearInterval(timerId);
     function tick() {
-      var left = new Date(rez.vyprsi).getTime() - Date.now();
-      if (left <= 0) { clearInterval(timerId); timerId = null; step = 7; render(); return; }
+      if (new Date(rez.vyprsi).getTime() <= Date.now()) { clearInterval(timerId); timerId = null; step = 7; render(); return; }
       var el = document.getElementById("cd");
-      if (el) el.textContent = String(Math.floor(left / 60000)).padStart(2, "0") + ":" + String(Math.floor(left / 1000) % 60).padStart(2, "0");
+      if (el) el.textContent = odpocetText();
     }
     tick(); timerId = setInterval(tick, 1000);
   }

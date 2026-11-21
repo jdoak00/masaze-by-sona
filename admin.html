@@ -88,25 +88,35 @@
     bind();
   }
 
-  function minutDoUvolneni(r) { return Math.max(0, Math.ceil((new Date(r.vyprsi).getTime() - Date.now()) / 60000)); }
+  /** Zbývající čas do zrušení: „1 h 20 min“ nebo „35 min“. */
+  function doUvolneni(r) {
+    var m = Math.max(0, Math.ceil((new Date(r.vyprsi).getTime() - Date.now()) / 60000));
+    return m >= 60 ? Math.floor(m / 60) + " h " + (m % 60) + " min" : m + " min";
+  }
 
   function resCard(r) {
     var ceka = r.stav !== "zaplaceno";
     var pill = r.stav === "hlásí zaplaceno" ? '<span class="pill rep">hlásí zaplaceno</span>' : '<span class="pill">' + esc(r.stav) + "</span>";
-    return '<div class="res' + (ceka ? " pending" : "") + '"><div class="res-top"><div><div class="res-when">' + shortDate(r.datum) + " · " + hezkyCas(r.cas) + "</div>" +
-      '<div class="small muted">' + esc(r.sluzba) + " · " + r.minut + " min</div></div>" + pill + "</div>" +
+    var nadpis = r.poukaz ? "🎁 Poukázka · " + czk(r.cena) : shortDate(r.datum) + " · " + hezkyCas(r.cas);
+    var podnadpis = r.poukaz ? esc(r.sluzba) : esc(r.sluzba) + " · " + r.minut + " min";
+    return '<div class="res' + (ceka ? " pending" : "") + '"><div class="res-top"><div><div class="res-when">' + nadpis + "</div>" +
+      '<div class="small muted">' + podnadpis + "</div></div>" + pill + "</div>" +
       '<div class="res-meta"><b>' + esc(r.jmeno) + "</b><span>" + esc(r.telefon) + " · " + esc(r.email) + "</span><span>" + czk(r.cena) + " · VS " + esc(r.vs) + "</span>" +
-      (r.stav === "čeká na platbu" && r.vyprsi ? "<span>Termín se uvolní za " + minutDoUvolneni(r) + " min</span>" : "") + "</div>" +
+      (r.stav === "čeká na platbu" && r.vyprsi ? "<span>" + (r.poukaz ? "Objednávka se zruší" : "Termín se uvolní") + " za " + doUvolneni(r) + "</span>" : "") +
+      (r.poukaz && !ceka ? "<span>Poukázka v PDF byla odeslána zákazníkovi i tobě.</span>" : "") + "</div>" +
       (ceka ? '<button class="btn ok" data-pay="' + esc(r.vs) + '"' + (pracuji ? " disabled" : "") + ">Platba přišla ✓</button>" : "") + "</div>";
   }
 
   function zalozkaRezervace() {
     var ceka = data.rezervace.filter(function (r) { return r.stav !== "zaplaceno"; });
-    var ok = data.rezervace.filter(function (r) { return r.stav === "zaplaceno"; });
+    var ok = data.rezervace.filter(function (r) { return r.stav === "zaplaceno" && !r.poukaz; });
+    var poukazy = data.rezervace.filter(function (r) { return r.stav === "zaplaceno" && r.poukaz; });
     return '<h3 class="group-title">Čeká na platbu <span class="muted small">(' + ceka.length + ")</span></h3>" +
-      (ceka.length ? ceka.map(resCard).join("") : '<p class="muted small">Nic nečeká. Nové rezervace se objeví tady a zároveň přijdou e-mailem.</p>') +
+      (ceka.length ? ceka.map(resCard).join("") : '<p class="muted small">Nic nečeká. Nové rezervace a poukázky se objeví tady a zároveň přijdou e-mailem.</p>') +
       '<h3 class="group-title">Potvrzené <span class="muted small">(' + ok.length + ")</span></h3>" +
-      (ok.length ? ok.map(resCard).join("") : '<p class="muted small">Zatím žádné.</p>');
+      (ok.length ? ok.map(resCard).join("") : '<p class="muted small">Zatím žádné.</p>') +
+      (poukazy.length ? '<h3 class="group-title">Prodané poukázky <span class="muted small">(' + poukazy.length + ")</span></h3>" + poukazy.map(resCard).join("") +
+        '<p class="small muted">Poukázky se z přehledu mažou po měsíci. Kopie každé zůstává v tvém e-mailu.</p>' : "");
   }
 
   function zalozkaTerminy() {
