@@ -2,7 +2,7 @@
 
 // adresa webové aplikace v Google Apps Scriptu (Implementovat → Spravovat implementace)
 var API = "https://script.google.com/macros/s/AKfycbzUAzfG9-2Wi-Ny0qwaw0IlCXyDLFStTzfyTbXmdkR2BjMopYzNTgWnH0GVHf3cmus/exec";
-var TELEFON = "604 411 129";
+var TELEFON = "604 411 129";   // pevné mezery: číslo se nikdy nerozdělí na dva řádky
 
 /** Zavolá skript. Text/plain tělo = jednoduchý požadavek bez CORS předletu. */
 function api(akce, data) {
