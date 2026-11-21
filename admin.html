@@ -31,6 +31,7 @@
   var data = null, chyba = "", tab = "res", pracuji = false;
   var noveDny = [];             // dny přidané v kalendáři, které zatím nemají žádný čas
   var potvrditMazani = null;    // { datum, cas|null } když mazání zruší rezervaci
+  var smazatPoukaz = null;      // VS poukázky, u které se ptáme na smazání
   var pickerOpen = false, pickerMonth = null;
   var HOURS = [], MINS = ["00", "30"];
   for (var h = 7; h <= 20; h++) HOURS.push(String(h).padStart(2, "0"));
@@ -104,6 +105,10 @@
       '<div class="res-meta"><b>' + esc(r.jmeno) + "</b><span>" + esc(r.telefon) + " · " + esc(r.email) + "</span><span>" + czk(r.cena) + " · VS " + esc(r.vs) + "</span>" +
       (r.stav === "čeká na platbu" && r.vyprsi ? "<span>" + (r.poukaz ? "Objednávka se zruší" : "Termín se uvolní") + " za " + doUvolneni(r) + "</span>" : "") +
       (r.poukaz && !ceka ? "<span>Poukázka v PDF byla odeslána zákazníkovi i tobě.</span>" : "") + "</div>" +
+      (r.poukaz && !ceka ? (smazatPoukaz === r.vs
+        ? '<div class="confirm"><p>Smazat poukázku <b>VS ' + esc(r.vs) + "</b> (" + czk(r.cena) + ", " + esc(r.jmeno) + ")? Zmizí z přehledu i z tabulky. Zákazníkovi se nic neposílá.</p>" +
+          '<div class="confirm-btns"><button class="yes" data-poukaz-yes="' + esc(r.vs) + '">Smazat – využito</button><button data-poukaz-no>Ponechat</button></div></div>'
+        : '<button class="del-day" style="align-self:flex-start" data-poukaz-del="' + esc(r.vs) + '">Smazat – poukázka využita ×</button>') : "") +
       (ceka ? '<button class="btn ok" data-pay="' + esc(r.vs) + '"' + (pracuji ? " disabled" : "") + ">Platba přišla ✓</button>" : "") + "</div>";
   }
 
@@ -116,7 +121,7 @@
       '<h3 class="group-title">Potvrzené <span class="muted small">(' + ok.length + ")</span></h3>" +
       (ok.length ? ok.map(resCard).join("") : '<p class="muted small">Zatím žádné.</p>') +
       (poukazy.length ? '<h3 class="group-title">Prodané poukázky <span class="muted small">(' + poukazy.length + ")</span></h3>" + poukazy.map(resCard).join("") +
-        '<p class="small muted">Poukázky se z přehledu mažou po měsíci. Kopie každé zůstává v tvém e-mailu.</p>' : "");
+        '<p class="small muted">Využitou poukázku smaž tlačítkem u ní. Jinak se sama smaže rok po zaplacení. Kopie každé zůstává v tvém e-mailu.</p>' : "");
   }
 
   function zalozkaTerminy() {
@@ -172,6 +177,9 @@
     document.getElementById("obnovit").onclick = function () { chyba = ""; nacti(); };
     document.getElementById("odhlasit").onclick = function () { klic = null; ulozit("adminKlic", null); data = null; render(); };
     app.querySelectorAll("[data-pay]").forEach(function (b) { b.onclick = function () { akce("admin-potvrdit", { vs: b.dataset.pay }); }; });
+    app.querySelectorAll("[data-poukaz-del]").forEach(function (b) { b.onclick = function () { smazatPoukaz = b.dataset.poukazDel; render(); }; });
+    app.querySelectorAll("[data-poukaz-yes]").forEach(function (b) { b.onclick = function () { smazatPoukaz = null; akce("admin-smazat-poukaz", { vs: b.dataset.poukazYes }); }; });
+    app.querySelectorAll("[data-poukaz-no]").forEach(function (b) { b.onclick = function () { smazatPoukaz = null; render(); }; });
     app.querySelectorAll("[data-del]").forEach(function (b) {
       b.onclick = function () {
         var p = b.dataset.del.split("|");
@@ -239,7 +247,7 @@
   }
 
   // přehled se sám obnovuje každou minutu (nové rezervace, odpočty)
-  setInterval(function () { if (klic && !pracuji && !document.getElementById("sheet-bg") && !potvrditMazani) nacti(); }, 60000);
+  setInterval(function () { if (klic && !pracuji && !document.getElementById("sheet-bg") && !potvrditMazani && !smazatPoukaz) nacti(); }, 60000);
   if (klic) { app.innerHTML = '<p class="loading">Načítám…</p>'; nacti(); } else render();
 })();
 </script>
