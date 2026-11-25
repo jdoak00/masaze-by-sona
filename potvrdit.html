@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Potvrzení platby – Masáže by Soňa</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0d0c0b">
+<link rel="icon" href="img/logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Jost:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="styl.css">
+<script src="spolecne.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand small"><img src="img/logo.jpg" alt="Masáže by Soňa"></header>
+  <main id="app" style="display:flex;flex-direction:column;gap:16px"><p class="loading">Načítám…</p></main>
+</div>
+
+<script>
+// Stránka z tlačítka „Platba přišla“ v e-mailu Soni.
+// Běží mimo Google, takže nevadí, kolik Google účtů je v telefonu přihlášeno.
+(function () {
+  var app = document.getElementById("app");
+  var p = new URLSearchParams(location.search);
+  var vs = p.get("vs") || "", podpis = p.get("podpis") || "";
+
+  function hlava(nadpis, text) {
+    return '<div class="done-head"><div class="seal">✓</div><h1>' + nadpis + '</h1>' +
+      (text ? '<p class="muted">' + text + '</p>' : '') + '</div>';
+  }
+  function souhrn(d) {
+    return '<div class="summary">' +
+      '<div class="row"><span>Zákazník</span><span>' + esc(d.jmeno) + '</span></div>' +
+      '<div class="row"><span>' + (d.poukaz ? "Poukázka" : "Termín") + '</span><span>' + esc(d.popis) + '</span></div>' +
+      '<div class="row"><span>Variabilní symbol</span><span>' + esc(d.vs) + '</span></div>' +
+      '<div class="row total"><span>Částka</span><span>' + czk(d.cena) + '</span></div></div>';
+  }
+  function chyba(text) {
+    app.innerHTML = '<h1>Odkaz nejde použít</h1><p class="err">' + esc(text) + '</p>' +
+      '<p class="small muted">Platbu můžete potvrdit také v <a href="admin.html" style="color:var(--accent)">administraci</a>.</p>';
+  }
+
+  function zobraz(d) {
+    if (d.stav === "zaplaceno") {
+      app.innerHTML = hlava("Už potvrzeno", "Tato platba je už potvrzená, není potřeba nic dělat.") + souhrn(d);
+      return;
+    }
+    if (d.stav === "zrušeno") {
+      app.innerHTML = '<h1>Rezervace je zrušená</h1>' + souhrn(d);
+      return;
+    }
+    app.innerHTML = '<h1>Potvrdit platbu?</h1>' + souhrn(d) +
+      (d.stav === "vypršelo" ? '<p class="notice">Lhůta pro platbu už vypršela. Potvrdit jde jen tehdy, pokud termín mezitím nikdo nezabral.</p>' : '') +
+      '<p class="small muted" style="margin:0">Nejdřív si v bance ověřte, že platba s tímto VS opravdu přišla.</p>' +
+      '<button class="btn ok" id="b">Platba přišla ✓</button><p class="err" id="v" role="alert"></p>';
+    var b = document.getElementById("b");
+    b.onclick = function () {
+      b.disabled = true; b.textContent = "Potvrzuji…";
+      api("odkaz-potvrdit", { vs: vs, podpis: podpis })
+        .then(function () {
+          app.innerHTML = hlava("Potvrzeno", d.poukaz ? "Zákazník dostal e-mailem poukázku v PDF." : "Zákazník dostal potvrzení e-mailem.") + souhrn(d);
+        })
+        .catch(function (e) {
+          b.disabled = false; b.textContent = "Platba přišla ✓";
+          document.getElementById("v").textContent = e.message;
+        });
+    };
+  }
+
+  if (!vs || !podpis) { chyba("V odkazu chybí údaje o rezervaci."); return; }
+  api("odkaz-info", { vs: vs, podpis: podpis }).then(zobraz).catch(function (e) { chyba(e.message); });
+})();
+</script>
+</body>
+</html>
